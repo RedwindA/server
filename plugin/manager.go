@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gotify/server/v3/auth"
+	"github.com/gotify/server/v3/database"
 	"github.com/gotify/server/v3/model"
 	"github.com/gotify/server/v3/plugin/compat"
 	"github.com/rs/zerolog/log"
@@ -23,7 +24,7 @@ import (
 
 // The Database interface for encapsulating database access.
 type Database interface {
-	GetUsers() ([]*model.User, error)
+	GetUsers(condition ...any) ([]*model.User, error)
 	GetPluginConfByUserAndPath(userid uint, path string) (*model.PluginConf, error)
 	CreatePluginConf(p *model.PluginConf) error
 	GetPluginConfByApplicationID(appid uint) (*model.PluginConf, error)
@@ -49,12 +50,12 @@ type Manager struct {
 	instances map[uint]compat.PluginInstance
 	plugins   map[string]compat.Plugin
 	messages  chan MessageWithUserID
-	db        Database
+	db        *database.GormDatabase
 	mux       *gin.RouterGroup
 }
 
 // NewManager created a Manager from configurations.
-func NewManager(db Database, directory string, mux *gin.RouterGroup, notifier Notifier) (*Manager, error) {
+func NewManager(db *database.GormDatabase, directory string, mux *gin.RouterGroup, notifier Notifier) (*Manager, error) {
 	manager := &Manager{
 		mutex:     &sync.RWMutex{},
 		instances: map[uint]compat.PluginInstance{},
@@ -92,7 +93,7 @@ func NewManager(db Database, directory string, mux *gin.RouterGroup, notifier No
 		return nil, err
 	}
 	for _, user := range users {
-		if err := manager.initializeForUser(*user); err != nil {
+		if err := manager.initializeForUser(manager.db, *user); err != nil {
 			return nil, err
 		}
 	}
@@ -171,9 +172,9 @@ func (m *Manager) HasInstance(pluginID uint) bool {
 }
 
 // RemoveUser disabled all plugins of a user when the user is disabled.
-func (m *Manager) RemoveUser(userID uint) error {
+func (m *Manager) RemoveUser(tx *database.GormDatabase, userID uint) error {
 	for _, p := range m.plugins {
-		pluginConf, err := m.db.GetPluginConfByUserAndPath(userID, p.PluginInfo().ModulePath)
+		pluginConf, err := tx.GetPluginConfByUserAndPath(userID, p.PluginInfo().ModulePath)
 		if err != nil {
 			return err
 		}
@@ -256,21 +257,21 @@ func (m *Manager) LoadPlugin(compatPlugin compat.Plugin) error {
 }
 
 // InitializeForUserID initializes all plugin instances for a given user.
-func (m *Manager) InitializeForUserID(userID uint) error {
+func (m *Manager) InitializeForUserID(tx *database.GormDatabase, userID uint) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	user, err := m.db.GetUserByID(userID)
+	user, err := tx.GetUserByID(userID)
 	if err != nil {
 		return err
 	}
 	if user != nil {
-		return m.initializeForUser(*user)
+		return m.initializeForUser(tx, *user)
 	}
 	return fmt.Errorf("user with id %d not found", userID)
 }
 
-func (m *Manager) initializeForUser(user model.User) error {
+func (m *Manager) initializeForUser(tx *database.GormDatabase, user model.User) error {
 	userCtx := compat.UserContext{
 		ID:    user.ID,
 		Name:  user.Name,
@@ -283,12 +284,12 @@ func (m *Manager) initializeForUser(user model.User) error {
 		}
 	}
 
-	apps, err := m.db.GetApplicationsByUser(user.ID)
+	apps, err := tx.GetApplicationsByUser(user.ID)
 	if err != nil {
 		return err
 	}
 	for _, app := range apps {
-		conf, err := m.db.GetPluginConfByApplicationID(app.ID)
+		conf, err := tx.GetPluginConfByApplicationID(app.ID)
 		if err != nil {
 			return err
 		}

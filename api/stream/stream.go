@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/gotify/server/v3/auth"
+	"github.com/gotify/server/v3/database"
 	"github.com/gotify/server/v3/model"
 )
 
@@ -50,7 +51,7 @@ func (a *API) CollectConnectedClientTokens() []string {
 }
 
 // NotifyDeletedUser closes existing connections for the given user.
-func (a *API) NotifyDeletedUser(userID uint) error {
+func (a *API) NotifyDeletedUser(tx *database.GormDatabase, userID uint) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 	if clients, ok := a.clients[userID]; ok {
